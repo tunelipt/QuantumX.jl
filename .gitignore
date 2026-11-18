@@ -1,0 +1,5 @@
+deps/usr/
+deps/deps.jl
+deps/build.log
+Manifest.toml
+test/Manifest.toml
