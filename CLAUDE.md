@@ -19,8 +19,10 @@ src/constants.jl             selected #define constants
 src/errors.jl                QXError, return-code checking (`@qx`, `_check`)
 src/api.jl                   high-level API (connect, read_xml, measure, compose_xml, ...)
 src/daq.jl                   Subscription, read_block / request_block / wait_block, block decoding
-test/runtests.jl             offline tests (51); test/hardware.jl runs if QUANTUMX_TEST_IP is set
+test/runtests.jl             offline tests (57); test/hardware.jl runs if QUANTUMX_TEST_IP is set
 examples/acquire.jl          port of the help file's acquisition example
+examples/acquire_rate.jl     set output rate, record N s, CSV, restore rates
+examples/acquire_filter.jl   same with configurable filter (CLI options), restores settings
 ```
 
 The HBM SDK is **not** part of this repository (HBM license). It is expected in the sibling folder
@@ -44,8 +46,8 @@ julia +release~x86 --project=. test/runtests.jl                                 
 julia +release~x86 --startup-file=no gen/generate.jl                             # regenerate enums/errors
 ```
 
-`Pkg.test()` failed in the 32-bit environment used for development ("expected package `Test` to be
-registered"), so run `test/runtests.jl` directly (stdlib `Test` is on the default load path).
+`Pkg.test()` and running `test/runtests.jl` directly both work. If juliaup names the 32-bit channel
+differently (e.g. `1.13~x86`), use that name instead of `release~x86`.
 
 ## Architecture
 
@@ -91,6 +93,39 @@ Two layers:
 - Verified offline: loading, layouts, xpaths, XML compose/parse round trips, units, error texts, NTP time
   conversion, network scan call, and decoding of a synthetic big-endian measured-value block via
   `HBM_XUTIL_GetDaqHeader`/`GetDaqData` (confirms the wire format).
-- **Not yet verified with hardware**: parameter read/write, subscriptions, async reads, and the assumed
-  `[NTP timestamp][value]` layout of asynchronous data formats. Run with
+- Verified with hardware (QuantumX module, 2026-11-19, `test/hardware.jl` passed): connect,
+  `read_xml`, `signal_list`, `measure`/`measure_all`, `module_status`/`error_status`, subscribe +
+  synchronous `read_block`, asynchronous `request_block`/`wait_block` (block arrives), unsubscribe/disconnect.
+- Verified with hardware (2026-11-19): parameter reads/writes (`read_parameter`/`write_parameter` of
+  `OutputRate`), `read_xml_section` + `parse_xml(stSignalParams, …)`, and 4 signals × 1200 Hz for 10–30 s
+  (`examples/acquire_rate.jl`; blocks arrive about every 0.09 s). `AddSignal`'s `BlockSize` is in bytes
+  per signal.
+- MX840 output rates (probed 2026-11-19, firmware 1.5.12.0): the XSD only says `double ≥ 0`; the module rounds
+  a requested `OutputRate` up to the next supported value (with `WARN_PAR_PARSING`) and caps it at 2400 Hz.
+  Seen: 0.001, 0.005, 0.01, 0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 25, 50, 75, 100, 150, 200, 300, 600, 1200, 2400.
+  Always read the rate back. Connector 1 is kept at a rate ≥ the other connectors': raising it can raise
+  others, and lowering it while others are higher has no effect — restore rates in reverse order (8 → 1).
+- **Module crashes (reboots) were caused by how we started/read the subscription**, not by the module
+  (2026-11-19). The old `subscribe` passed `StartTime = 0` to `FinishSubscription` and a 2 MB `MaxLen`
+  (`MEASVALBLOCKSIZELIMIT`) to `GetMeasValBlock`; the MX840 (firmware 1.5.12) then rebooted after a few
+  seconds, intermittently at first and every time later. HBM's .NET layer (`QXSimpleDAQ`, disassembled from
+  the 2009 `HBM.QuantumX.dll`, same `HBM_QX_Framework.dll`) instead gets the start time from an immediate
+  trigger (`ActivateTrigger` TRIGTP_IMMEDIATE + `WaitForTrigger(1000 ms)`) and passes `MaxLen = Σ(BlockSize+24)`.
+  `subscribe` now does the same (`module_time`, default `blocksize = 10000`, computed `bufsize`); since then
+  600 Hz (previously 6/6 crashes), 1200 Hz and 8 × 2400 Hz for 120 s run without a crash. Which of the two
+  changes is the actual fix was not isolated.
+- After a reboot the module answers status at ~55 s but rejects connects (`ERR_CON_ADRRESINI_FAILED`) until
+  ~70 s; its clock counts from power-on (no time sync) and `write_parameter` changes are lost.
+- Open inputs (no sensor; connectors 7–8 on 2026-11-19) deliver the constant `3.689349e19` =
+  `reinterpret(Float32, 0x5FFFFFFF)`, the module's invalid-value marker — not a decoding error. `measure`
+  returns it as a Float64 near 2^65 with noisy low bits, so `isinvalid` compares by value (rtol 1e-6 of
+  `INVALID_MARKER = 2^65`). `measure`, `measure_all`, `read_block`, `wait_block` and `decode_signal` turn it
+  into `NaN` by default (`invalid_nan = false` for raw values).
+- **Not yet verified with hardware**: the values/layout of asynchronous data formats
+  (assumed `[NTP timestamp][value]`; the test only checks that a block arrives). A CAN `AsyncSignal`
+  subscribed on its own is accepted and reports `0x5C` (FLOAT_ASYNC → `SignalBlock{Float32}`), but delivered
+  0 values (connector in analog mode, no CAN traffic), so the layout needs a CAN source to verify.
+- Mixing a sync (analog) and an async (CAN) signal in one subscription fails in `FinishSubscription` with
+  `ERR_DAQ_TRIGTIME` (start time 0); each works alone. Not yet investigated (separate subscriptions? explicit
+  start time?). Run hardware tests with
   `QUANTUMX_TEST_IP=<module ip> julia +release~x86 --project=. test/runtests.jl`.

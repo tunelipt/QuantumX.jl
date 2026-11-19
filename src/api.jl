@@ -277,24 +277,35 @@ restart(dev::DeviceLike; cold::Bool = false, use_udp::Bool = false) = @qx L.HBM_
 signal_list(dev::DeviceLike) = String.(@qx L.HBM_XDAQ_GetSignalList(uuid(dev)))
 
 """
-    measure(dev, connector, signal = 1; scale = SCALETP_PHYS) -> Float64
-    measure(dev, signal_id::String) -> Float64
+    measure(dev, connector, signal = 1; scale = SCALETP_PHYS, invalid_nan = true) -> Float64
+    measure(dev, signal_id::String; invalid_nan = true) -> Float64
 
 Read a single current measured value (`HBM_XDAQ_GetAnalogMeasVal` / `HBM_XDAQ_GetMeasVal`).
+The module's invalid marker (open input, see [`INVALID_MARKER`](@ref)) is returned as
+`NaN` unless `invalid_nan = false`.
 """
-measure(dev::DeviceLike, connector::Integer, signal::Integer = 1; scale::ScaleType = SCALETP_PHYS) =
-    @qx L.HBM_XDAQ_GetAnalogMeasVal(uuid(dev), UInt32(connector), UInt32(signal), scale)
-measure(dev::DeviceLike, sigid::AbstractString) = @qx L.HBM_XDAQ_GetMeasVal(uuid(dev), String(sigid))
+function measure(dev::DeviceLike, connector::Integer, signal::Integer = 1;
+                 scale::ScaleType = SCALETP_PHYS, invalid_nan::Bool = true)
+    v = @qx L.HBM_XDAQ_GetAnalogMeasVal(uuid(dev), UInt32(connector), UInt32(signal), scale)
+    return invalid_nan ? _nan_invalid(v) : v
+end
+function measure(dev::DeviceLike, sigid::AbstractString; invalid_nan::Bool = true)
+    v = @qx L.HBM_XDAQ_GetMeasVal(uuid(dev), String(sigid))
+    return invalid_nan ? _nan_invalid(v) : v
+end
 
 """
-    measure_all(dev; enabled_only = true, maxvals = 256) -> Vector{Float64}
+    measure_all(dev; enabled_only = true, maxvals = 256, invalid_nan = true) -> Vector{Float64}
 
-One current value of every signal of the module (`HBM_XDAQ_GetAllMeasVals`).
+One current value of every signal of the module (`HBM_XDAQ_GetAllMeasVals`). Invalid
+values (open inputs) are `NaN` unless `invalid_nan = false`.
 """
-function measure_all(dev::DeviceLike; enabled_only::Bool = true, maxvals::Integer = 256)
+function measure_all(dev::DeviceLike; enabled_only::Bool = true, maxvals::Integer = 256,
+                     invalid_nan::Bool = true)
     vals = zeros(Float64, maxvals)
     n = @qx L.HBM_XDAQ_GetAllMeasVals(uuid(dev), UInt32(enabled_only), vals)
-    return vals[1:min(Int(n), maxvals)]
+    out = vals[1:min(Int(n), maxvals)]
+    return invalid_nan ? _nan_invalid!(out) : out
 end
 
 # ------------------------------------------------------------------ xpaths (XUTIL)

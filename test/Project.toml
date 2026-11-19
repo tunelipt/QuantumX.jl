@@ -1,7 +1,7 @@
 [deps]
 Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
 QuantumX = "f202c38c-fb98-485d-ab8b-899e871388e1"
-Test = "8dfa591a-0aa1-5c4c-a0d9-a7c3e16df9a6"
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [sources]
 QuantumX = {path = ".."}

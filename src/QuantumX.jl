@@ -134,7 +134,7 @@ export signal_list, measure, measure_all
 export signal_path, channel_path, sensor_path, amplifier_path, alarm_path, peak_path, gate_path,
        parse_signal_path, compose_xml, parse_xml
 export unit_name, unit_code, error_text, ntp2datetime, datetime2ntp
-export Subscription, subscribe, unsubscribe, read_block, request_block, wait_block, SignalBlock,
+export Subscription, subscribe, unsubscribe, module_time, INVALID_MARKER, isinvalid, read_block, request_block, wait_block, SignalBlock,
        timestamps
 export cstring, cchars, setfields, current_value, next_timestamp, status_value
 export stSensor, stCanSigDesc, stSignalParams, stCanSignalParams, stAlarmIndexParams,

@@ -47,11 +47,11 @@ sp  = stSignalParams(Number = 1, FilterType = FILTERTYPE_LOWPASS, FiltCharact = 
 write_xml_section(dev, PARVIEW_CONNECTORPARAM, channel_path(3), compose_xml(sp))
 
 # single values
-measure(dev, 3)                                # connector 3, signal 1, physical units
+measure(dev, 3)                                # connector 3, signal 1, physical units (NaN if open)
 measure_all(dev)
 
 # continuous acquisition
-sub = subscribe(dev, [signal_path(c) for c in 1:4]; blocksize = 4096)
+sub = subscribe(dev, [signal_path(c) for c in 1:4])   # blocksize = 10000 bytes per signal
 blocks = read_block(sub)                       # Vector{SignalBlock}, values in host order
 blocks[1].values, timestamps(blocks[1])
 request_block(sub); blocks = wait_block(sub)   # asynchronous variant

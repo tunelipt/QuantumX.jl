@@ -32,6 +32,29 @@ const ASYNC_ELTYPES = Dict{UInt8,DataType}(
     DAQ_MVALFMT_INT32_ASYNC => Int32, DAQ_MVALFMT_INT64_ASYNC => Int64,
     DAQ_MVALFMT_UINT32_ASYNC => UInt32, DAQ_MVALFMT_UINT64_ASYNC => UInt64)
 
+"""
+    INVALID_MARKER
+
+Value (≈ 2^65 ≈ 3.689349e19) that the module delivers instead of a measured value when
+there is no valid measurement, e.g. at an open input. Blocks carry it as the Float32
+`0x5FFFFFFF`; single-value reads as a Float64 near 2^65 with noise in the low bits.
+"""
+const INVALID_MARKER = 2.0^65
+
+"`true` if `x` is the module's invalid-value marker (see [`INVALID_MARKER`](@ref))."
+isinvalid(x::AbstractFloat) = abs(Float64(x) - INVALID_MARKER) <= 1e-6 * INVALID_MARKER
+isinvalid(::Real) = false
+
+_nan_invalid(x::T) where {T<:AbstractFloat} = isinvalid(x) ? T(NaN) : x
+_nan_invalid(x) = x
+function _nan_invalid!(v::AbstractVector{T}) where {T<:AbstractFloat}
+    @inbounds for i in eachindex(v)
+        isinvalid(v[i]) && (v[i] = T(NaN))
+    end
+    return v
+end
+_nan_invalid!(v) = v
+
 "Size in bytes of one measured value of a data format (low nibble, 0 means 16)."
 function value_size(fmt::UInt8)
     n = fmt & DAQ_MVALFMT_MASK
@@ -39,12 +62,20 @@ function value_size(fmt::UInt8)
 end
 
 """
-    decode_signal(buf, rxlen, usersigid) -> SignalBlock
+    decode_signal(buf, rxlen, usersigid; invalid_nan = true) -> SignalBlock
 
 Extract one signal from a raw measured value block using `HBM_XUTIL_GetDaqHeader`
 (mode 0 = user signal id) and `HBM_XUTIL_GetDaqData` (big endian -> host order).
+With `invalid_nan`, floating-point values equal to the module's invalid marker
+([`INVALID_MARKER`](@ref), e.g. open inputs) are replaced by `NaN`.
 """
-function decode_signal(buf::Vector{UInt8}, rxlen::Integer, usersigid::Integer)
+function decode_signal(buf::Vector{UInt8}, rxlen::Integer, usersigid::Integer; invalid_nan::Bool = true)
+    b = _decode_signal(buf, rxlen, usersigid)
+    invalid_nan && _nan_invalid!(b.values)
+    return b
+end
+
+function _decode_signal(buf::Vector{UInt8}, rxlen::Integer, usersigid::Integer)
     hdr, offset = @qx L.HBM_XUTIL_GetDaqHeader(UInt32(0), UInt32(usersigid), buf, UInt32(rxlen))
     n = Int(hdr.MeasValCount)
     elsize = value_size(hdr.DataFormat)
@@ -107,6 +138,8 @@ mutable struct Subscription
     buffer::Vector{UInt8}
     pending::Union{Nothing,UInt32}   # handle of an outstanding async request
     active::Bool
+    trigger::Union{Nothing,String}   # immediate trigger used to obtain the start time
+    starttime::UInt64                # NTP start time passed to FinishSubscription
 end
 
 Base.show(io::IO, s::Subscription) =
@@ -116,32 +149,73 @@ _sigid(s::AbstractString) = String(s)
 _sigid(t::Tuple) = signal_path(t...)
 _sigid(c::Integer) = signal_path(c)
 
+"Size of the header preceding each signal in a measured value block (as HBM's .NET layer uses)."
+const DAQ_HEADER_SIZE = 24
+
 """
-    subscribe(dev, signals; blocksize = 4096, starttime = 0, bufsize = 2_000_000) -> Subscription
+    module_time(dev; timeout_ms = 1000) -> (UInt64 NTP time, trigger name)
+
+Current time of a module, obtained the way HBM's .NET layer (`QXSimpleDAQ.StartDAQ`) does:
+an immediate trigger (`TRIGTP_IMMEDIATE`, connector 1, channel 1) is activated and waited
+for. The trigger stays defined; remove it with `HBM_XDAQ_ClearTrigger(name)`.
+"""
+function module_time(dev::DeviceLike; timeout_ms::Integer = 1000)
+    u = uuid(dev)
+    name = string("Trig", u)
+    trig = stTrigInfo(; Type = TRIGTP_IMMEDIATE, Uuid = u, Connector = 1, Channel = 1, Name = name)
+    @qx L.HBM_XDAQ_ActivateTrigger(trig)
+    t = try
+        @qx L.HBM_XDAQ_WaitForTrigger(UInt32(timeout_ms), name)
+    catch
+        L.HBM_XDAQ_ClearTrigger(name)
+        rethrow()
+    end
+    return t, name
+end
+
+"""
+    subscribe(dev, signals; blocksize = 10000, starttime = nothing, bufsize = nothing) -> Subscription
 
 Configure and start a measurement (`HBM_XDAQ_OpenSubscription`, `AddSignal`,
 `FinishSubscription`). `signals` is a vector of signal ids (xpaths from
 `signal_path`/`signal_list`), `(connector, channel, signal)` tuples or connector numbers.
-User signal ids are assigned 1, 2, ... in order. `starttime` is an NTP time stamp
-(0 = start now).
+User signal ids are assigned 1, 2, ... in order.
+
+* `blocksize` – bytes per signal and block (`AddSignal`'s `BlockSize`); HBM's demo uses 10000.
+  Raise it for high rates so that at least ~1 s of data fits (`4 × rate` bytes for floats).
+* `starttime` – NTP time stamp; `nothing` starts now. Like HBM's .NET layer, "now" is taken
+  from an immediate trigger on the module ([`module_time`](@ref)) instead of passing 0,
+  which crashed (rebooted) an MX840 with firmware 1.5.12.
+* `bufsize` – receive buffer; default `Σ (blocksize + 24)`, the size the .NET layer passes as
+  `MaxLen`. Passing the 2 MB limit is suspected to overload the module.
 """
-function subscribe(dev::DeviceLike, signals::AbstractVector; blocksize::Integer = 4096,
-                   starttime::Integer = 0, bufsize::Integer = MEASVALBLOCKSIZELIMIT)
+function subscribe(dev::DeviceLike, signals::AbstractVector; blocksize::Integer = 10000,
+                   starttime::Union{Nothing,Integer} = nothing,
+                   bufsize::Union{Nothing,Integer} = nothing)
     d = dev isa QXDevice ? dev : QXDevice(dev)
     ids = String[_sigid(s) for s in signals]
     u = uuid(d)
+    bufsize === nothing && (bufsize = length(ids) * (blocksize + DAQ_HEADER_SIZE))
     @qx L.HBM_XDAQ_OpenSubscription(u)
     usersigids = UInt16.(1:length(ids))
+    trigger = nothing
+    t0 = UInt64(0)
     try
         for (id, us) in zip(ids, usersigids)
             @qx L.HBM_XDAQ_AddSignal(u, id, us, UInt32(blocksize))
         end
-        @qx L.HBM_XDAQ_FinishSubscription(u, UInt64(starttime))
+        if starttime === nothing
+            t0, trigger = module_time(d)
+        else
+            t0 = UInt64(starttime)
+        end
+        @qx L.HBM_XDAQ_FinishSubscription(u, t0)
     catch
         L.HBM_XDAQ_ClearSubscription(u)
+        trigger === nothing || L.HBM_XDAQ_ClearTrigger(trigger)
         rethrow()
     end
-    return Subscription(d, ids, usersigids, Vector{UInt8}(undef, bufsize), nothing, true)
+    return Subscription(d, ids, usersigids, Vector{UInt8}(undef, bufsize), nothing, true, trigger, t0)
 end
 
 # Subscriptions with an outstanding asynchronous request. Keeps their buffers rooted so
@@ -166,26 +240,32 @@ function unsubscribe(sub::Subscription)
         L.HBM_XCOM_Async_ReadData(sub.pending)
         _set_pending!(sub, nothing)
     end
-    @qx L.HBM_XDAQ_ClearSubscription(uuid(sub.dev))
     sub.active = false
+    rc = L.HBM_XDAQ_ClearSubscription(uuid(sub.dev))
+    if sub.trigger !== nothing
+        L.HBM_XDAQ_ClearTrigger(sub.trigger)   # as the .NET layer's StopDAQ does
+        sub.trigger = nothing
+    end
+    _check(:HBM_XDAQ_ClearSubscription, rc)
     return nothing
 end
 
-function _decode_all(sub::Subscription, rxlen)
-    return [decode_signal(sub.buffer, rxlen, us) for us in sub.usersigids]
+function _decode_all(sub::Subscription, rxlen; invalid_nan::Bool = true)
+    return [decode_signal(sub.buffer, rxlen, us; invalid_nan) for us in sub.usersigids]
 end
 
 """
-    read_block(sub) -> Vector{SignalBlock}
+    read_block(sub; invalid_nan = true) -> Vector{SignalBlock}
 
 Read the next block of measured values of all subscribed signals
-(`HBM_XDAQ_GetMeasValBlock`); blocks until data is available.
+(`HBM_XDAQ_GetMeasValBlock`); blocks until data is available. Invalid values
+(open inputs, see [`INVALID_MARKER`](@ref)) become `NaN` unless `invalid_nan = false`.
 """
-function read_block(sub::Subscription)
+function read_block(sub::Subscription; invalid_nan::Bool = true)
     sub.active || error("subscription is closed")
     sub.pending === nothing || error("an asynchronous request is pending; call wait_block first")
     rxlen = @qx L.HBM_XDAQ_GetMeasValBlock(uuid(sub.dev), sub.buffer)
-    return _decode_all(sub, rxlen)
+    return _decode_all(sub, rxlen; invalid_nan)
 end
 
 """
@@ -204,13 +284,13 @@ function request_block(sub::Subscription)
 end
 
 """
-    wait_block(sub; timeout_ms = nothing) -> Union{Vector{SignalBlock},Nothing}
+    wait_block(sub; timeout_ms = nothing, invalid_nan = true) -> Union{Vector{SignalBlock},Nothing}
 
 Wait for the request started by [`request_block`](@ref) (`HBM_XCOM_Async_ReadData` or
 `HBM_XCOM_Async_ReadData_Timeout`). With a timeout, returns `nothing` if the data has not
-arrived yet; call again to keep waiting.
+arrived yet; call again to keep waiting. Invalid values become `NaN` as in [`read_block`](@ref).
 """
-function wait_block(sub::Subscription; timeout_ms::Union{Nothing,Integer} = nothing)
+function wait_block(sub::Subscription; timeout_ms::Union{Nothing,Integer} = nothing, invalid_nan::Bool = true)
     h = sub.pending
     h === nothing && error("no asynchronous request pending")
     rc, rxlen = timeout_ms === nothing ? L.HBM_XCOM_Async_ReadData(h) :
@@ -220,5 +300,5 @@ function wait_block(sub::Subscription; timeout_ms::Union{Nothing,Integer} = noth
     end
     _set_pending!(sub, nothing)
     _check(:HBM_XCOM_Async_ReadData, rc)
-    return _decode_all(sub, rxlen)
+    return _decode_all(sub, rxlen; invalid_nan)
 end

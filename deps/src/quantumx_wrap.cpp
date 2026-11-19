@@ -28,10 +28,26 @@
 
 #include "HBM_QX_Framework.h"
 
+// stModStatItem has a user-defined default constructor in the SDK header
+// (`stModStatItem() : Id(0) {}`), which makes it non-trivial. jlcxx then treats it as
+// a wrapped C++ object (boxed pointer) instead of an isbits mirror and aborts with
+// "jl_datatype_nfields(dt) == 1" when boxing. It is plain data otherwise, so force
+// the mirrored mapping.
+template <> struct jlcxx::IsMirroredType<stModStatItem> : std::true_type {};
+
 namespace
 {
 
 using DeviceInfo = std::remove_reference_t<decltype(std::declval<stDeviceList>().Device[0])>;
+
+// Every struct mapped with map_type must be treated as an isbits mirror by jlcxx.
+template <typename... T> constexpr bool all_mirrored = (jlcxx::IsMirroredType<T>::value && ...);
+static_assert(all_mirrored<stSensor, stCanSigDesc, stSignalParams, stCanSignalParams,
+                           stAlarmIndexParams, stAlarmGlobalParams, stPeakIndexParams,
+                           stGateIndexParams, stTrigInfo, stDaqHeader, stErrStatItem,
+                           stModStatItem, stConModulInfo, DeviceInfo>,
+              "a mapped struct is not mirrored by jlcxx (non-trivial C++ type?)");
+static_assert(std::is_trivially_copyable_v<stModStatItem>, "stModStatItem must be memcpy-able");
 
 // ---------------------------------------------------------------- helpers
 

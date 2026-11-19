@@ -135,6 +135,21 @@ end
     ts = timestamps(b1)
     @test ts[1] == t0 && length(ts) == 4
     @test ntp2datetime(ts[3]) == DateTime(2024, 1, 1, 0, 0, 0, 500)
+
+    # invalid marker (open input): Float32 0x5FFFFFFF in blocks -> NaN
+    marker = reinterpret(Float32, 0x5FFFFFFF)
+    v3 = Float32[1.0, marker, 2.0]
+    buf3 = vcat(sigblock(3, v3, t0, t1), zeros(UInt8, 64))
+    b3 = Q.decode_signal(buf3, length(buf3) - 64, 3)
+    @test b3.values[1] == 1 && isnan(b3.values[2]) && b3.values[3] == 2
+    @test Q.decode_signal(buf3, length(buf3) - 64, 3; invalid_nan = false).values[2] == marker
+end
+
+@testset "invalid marker" begin
+    @test isinvalid(reinterpret(Float32, 0x5FFFFFFF))
+    @test isinvalid(reinterpret(Float64, 0x440000000d7ab369))   # as returned by measure()
+    @test !isinvalid(1.0) && !isinvalid(-7.8e-5) && !isinvalid(3.0e19) && !isinvalid(NaN)
+    @test isnan(Q._nan_invalid(INVALID_MARKER)) && Q._nan_invalid(2.5) == 2.5
 end
 
 if haskey(ENV, "QUANTUMX_TEST_IP")
