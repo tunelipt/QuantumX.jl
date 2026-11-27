@@ -196,8 +196,12 @@ lookup(d, val, opt) = get(d, lowercase(val)) do
 end
 
 function parse_args(args)
-    length(args) >= 2 || error("usage: configure.jl <ip> <connector> [options]; see the header of the file")
-    ip, c = args[1], parse(Int, args[2])
+    usage = "usage: configure.jl <ip> <connector> [options], e.g. configure.jl 192.168.169.10 3 --rate 1200; " *
+            "see the header of the file for all options"
+    length(args) >= 2 || error(usage)
+    ip = args[1]
+    c = tryparse(Int, args[2])
+    c === nothing && error("connector number missing (got \"$(args[2])\")\n" * usage)
     o = Dict{Symbol,Any}()
     i = 3
     while i <= length(args)
