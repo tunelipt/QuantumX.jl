@@ -47,9 +47,14 @@ end
 end
 @inline function _check(func::Symbol, t::Tuple)
     _check(func, t[1])
-    rest = Base.tail(t)
+    rest = map(_jl, Base.tail(t))
     return length(rest) == 1 ? rest[1] : rest
 end
+
+# Text outputs come from the wrapper as CxxWrap `StdString`s; return Julia `String`s
+# (regexes, for instance, only work on `String`).
+_jl(x) = x
+_jl(x::CxxWrap.StdString) = String(x)
 
 # Positive return codes: only the documented warnings (WARN_*) are reported; other
 # positive values are ordinary results (e.g. HBM_Init returns 1).

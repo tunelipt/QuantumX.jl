@@ -19,10 +19,11 @@ src/constants.jl             selected #define constants
 src/errors.jl                QXError, return-code checking (`@qx`, `_check`)
 src/api.jl                   high-level API (connect, read_xml, measure, compose_xml, ...)
 src/daq.jl                   Subscription, read_block / request_block / wait_block, block decoding
-test/runtests.jl             offline tests (57); test/hardware.jl runs if QUANTUMX_TEST_IP is set
+test/runtests.jl             offline tests (72); test/hardware.jl runs if QUANTUMX_TEST_IP is set
 examples/acquire.jl          port of the help file's acquisition example
 examples/acquire_rate.jl     set output rate, record N s, CSV, restore rates
 examples/acquire_filter.jl   same with configurable filter (CLI options), restores settings
+examples/print_config.jl     print mode, sensor, signal (rate, filter) and value of all connectors
 ```
 
 The HBM SDK is **not** part of this repository (HBM license). It is expected in the sibling folder
@@ -54,8 +55,9 @@ differently (e.g. `1.13~x86`), use that name instead of `release~x86`.
 Two layers:
 
 - **`QuantumX.LibQX`** – raw bindings, C names (`HBM_XPAR_ReadXML`, ...), never throw on error codes.
-  Conventions: `const char*` → `String`; scalar output pointers are returned as a tuple after the
-  return code (`rc, uuid = HBM_XCOM_ConnectToTcpIpDev(ip, port)`); text buffers take `MaxSize` and
+  Conventions: `const char*` → `String` (text outputs arrive as CxxWrap `StdString`; `_check` and the
+  path helpers convert them, so the high-level API returns `String`, which regexes need); scalar
+  output pointers are returned as a tuple after the return code (`rc, uuid = HBM_XCOM_ConnectToTcpIpDev(ip, port)`); text buffers take `MaxSize` and
   return a `String`; binary buffers are caller-owned Julia vectors (`ArrayRef`); C structs/enums are
   mapped with `mod.map_type` onto Julia isbits types / `@enum`s (C value names kept, `en` prefix
   dropped from type names, `enFormat` → `DaqFormat`).
@@ -124,6 +126,8 @@ Two layers:
   returns it as a Float64 near 2^65 with noisy low bits, so `isinvalid` compares by value (rtol 1e-6 of
   `INVALID_MARKER = 2^65`). `measure`, `measure_all`, `read_block`, `wait_block` and `decode_signal` turn it
   into `NaN` by default (`invalid_nan = false` for raw values).
+- `HBM_XUTIL_ParseSensor` (DLL 1.4.0.1) returns `SCALING_UNKNOWN` for the `Gain` scaling (`<m>`, `<b>`; seen on
+  connectors 7–8, 2026-11-27); `examples/print_config.jl` then reads the scaling from the sensor XML.
 - **Not yet verified with hardware**: the values/layout of asynchronous data formats
   (assumed `[NTP timestamp][value]`; the test only checks that a block arrives). A CAN `AsyncSignal`
   subscribed on its own is accepted and reports `0x5C` (FLOAT_ASYNC → `SignalBlock{Float32}`), but delivered

@@ -63,7 +63,7 @@ isinitialized() = _initialized[]
 _ensure_init() = _initialized[] || init()
 
 "Version string of HBM_QX_Framework.dll."
-dll_version() = L.HBM_XUTIL_GetDllVersion()
+dll_version() = _jl(L.HBM_XUTIL_GetDllVersion())
 
 "UUID of this PC application within the QuantumX network."
 own_uuid() = L.HBM_XCOM_GetOwnUUID()
@@ -316,15 +316,15 @@ end
 Xpath / signal id of a signal (`HBM_XUTIL_ComposeSignalPath`), e.g. for `subscribe`.
 """
 signal_path(connector::Integer, channel::Integer = 1, signal::Integer = 1; conntype::Integer = 1) =
-    L.HBM_XUTIL_ComposeSignalPath(UInt32(connector), UInt32(channel), UInt32(signal), UInt32(conntype), UInt32(PATH_MAXLEN))
+    String(L.HBM_XUTIL_ComposeSignalPath(UInt32(connector), UInt32(channel), UInt32(signal), UInt32(conntype), UInt32(PATH_MAXLEN)))
 channel_path(connector::Integer, channel::Integer = 1; conntype::Integer = 1) =
-    L.HBM_XUTIL_ComposeChannelPath(UInt32(connector), UInt32(channel), UInt32(conntype), UInt32(PATH_MAXLEN))
+    String(L.HBM_XUTIL_ComposeChannelPath(UInt32(connector), UInt32(channel), UInt32(conntype), UInt32(PATH_MAXLEN)))
 sensor_path(connector::Integer, channel::Integer = 1; conntype::Integer = 1) =
-    L.HBM_XUTIL_ComposeSensorPath(UInt32(connector), UInt32(channel), UInt32(conntype), UInt32(PATH_MAXLEN))
-amplifier_path(connector::Integer) = L.HBM_XUTIL_ComposeAmplifierPath(UInt32(connector), UInt32(PATH_MAXLEN))
-alarm_path() = L.HBM_XUTIL_ComposeAlarmPath(UInt32(PATH_MAXLEN))
-peak_path() = L.HBM_XUTIL_ComposePeakPath(UInt32(PATH_MAXLEN))
-gate_path() = L.HBM_XUTIL_ComposeGatePath(UInt32(PATH_MAXLEN))
+    String(L.HBM_XUTIL_ComposeSensorPath(UInt32(connector), UInt32(channel), UInt32(conntype), UInt32(PATH_MAXLEN)))
+amplifier_path(connector::Integer) = String(L.HBM_XUTIL_ComposeAmplifierPath(UInt32(connector), UInt32(PATH_MAXLEN)))
+alarm_path() = String(L.HBM_XUTIL_ComposeAlarmPath(UInt32(PATH_MAXLEN)))
+peak_path() = String(L.HBM_XUTIL_ComposePeakPath(UInt32(PATH_MAXLEN)))
+gate_path() = String(L.HBM_XUTIL_ComposeGatePath(UInt32(PATH_MAXLEN)))
 
 """
     parse_signal_path(xpath) -> (connector, channel, signal, conntype)
@@ -368,12 +368,12 @@ parse_xml(::Type{stGateIndexParams}, xml::AbstractString; index::Integer) = (_en
 parse_xml(::Type{stPeakIndexParams}, xml::AbstractString; index::Integer) = (_ensure_init(); @qx L.HBM_XUTIL_ParsePeakIndex(UInt32(index), String(xml)))
 
 "Description of the last XML parsing error (`HBM_XUTIL_GetLastXmlError`)."
-last_xml_error() = L.HBM_XUTIL_GetLastXmlError()
+last_xml_error() = _jl(L.HBM_XUTIL_GetLastXmlError())
 
 # ------------------------------------------------------------------ units, time
 
 "Name of a physical unit code (`HBM_XUTIL_GetUnitNameFromCode`)."
-unit_name(code::Integer) = L.HBM_XUTIL_GetUnitNameFromCode(UInt32(code))
+unit_name(code::Integer) = _jl(L.HBM_XUTIL_GetUnitNameFromCode(UInt32(code)))
 
 "Physical unit code of a unit name (`HBM_XUTIL_GetUnitCodeFromName`); negative if unknown."
 unit_code(name::AbstractString) = Int(L.HBM_XUTIL_GetUnitCodeFromName(String(name)))

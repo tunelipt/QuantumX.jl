@@ -51,6 +51,9 @@ end
     @test !isempty(alarm_path())
     @test !isempty(peak_path())
     @test !isempty(gate_path())
+    # text results are Julia Strings, not CxxWrap StdStrings (regexes need String)
+    @test all(x -> x isa String, (p, channel_path(2), sensor_path(2), amplifier_path(5),
+                                  alarm_path(), peak_path(), gate_path(), dll_version()))
 end
 
 @testset "compose/parse XML" begin
@@ -58,6 +61,8 @@ end
                         FiltFreq = 100, OutputRate = 600, DecimalPlaces = 5)
     xml = compose_xml(sp)
     @test occursin("<OutputRate>600", xml)
+    @test xml isa String
+    @test match(r"<OutputRate>([^<]*)<", xml) !== nothing
     sp2 = parse_xml(stSignalParams, xml)
     @test sp2.OutputRate == 600.0
     @test sp2.FiltFreq == 100.0
@@ -99,6 +104,7 @@ end
     c = unit_code("V")
     @test c >= 0
     @test unit_name(c) == "V"
+    @test unit_name(c) isa String
     e = QXError(:HBM_XCOM_ConnectToTcpIpDev, Q.ERR_EVFLG_PTHREADS)
     msg = sprint(showerror, e)
     @test occursin("ERR_EVFLG_PTHREADS", msg)
