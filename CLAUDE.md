@@ -24,6 +24,7 @@ examples/acquire.jl          port of the help file's acquisition example
 examples/acquire_rate.jl     set output rate, record N s, CSV, restore rates
 examples/acquire_filter.jl   same with configurable filter (CLI options), restores settings
 examples/print_config.jl     print mode, sensor, signal (rate, filter) and value of all connectors
+examples/configure.jl        configure one connector (sensor, scaling, rate, filter), save/restore
 ```
 
 The HBM SDK is **not** part of this repository (HBM license). It is expected in the sibling folder
@@ -128,6 +129,9 @@ Two layers:
   into `NaN` by default (`invalid_nan = false` for raw values).
 - `HBM_XUTIL_ParseSensor` (DLL 1.4.0.1) returns `SCALING_UNKNOWN` for the `Gain` scaling (`<m>`, `<b>`; seen on
   connectors 7–8, 2026-11-27); `examples/print_config.jl` then reads the scaling from the sensor XML.
+- `HBM_XUTIL_ComposeSensor` (DLL 1.4.0.1) always writes `<PhysUnitUsr>V</PhysUnitUsr>`, whatever the struct
+  holds; `examples/configure.jl` clears it (the unit is given by `PhysUnit`). Writing a saved channel XML back
+  (`read_xml_section`/`write_xml_section` of `channel_path(c)`) restores a connector exactly (2026-11-27).
 - **Not yet verified with hardware**: the values/layout of asynchronous data formats
   (assumed `[NTP timestamp][value]`; the test only checks that a block arrives). A CAN `AsyncSignal`
   subscribed on its own is accepted and reports `0x5C` (FLOAT_ASYNC → `SignalBlock{Float32}`), but delivered
