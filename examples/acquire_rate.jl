@@ -33,6 +33,12 @@ function main(ip, outfile; connectors = [1, 2, 3, 6],
         for (c, r, sp) in zip(connectors, actual, paths)
             filt = parse_xml(stSignalParams, read_xml_section(dev, view, sp))
             println("connector $c: $(r) Hz, filter $(filt.FilterType) $(filt.FiltFreq) Hz")
+            # A low lowpass cutoff caps the output rate (MX840: 0.5 Hz Bessel -> max 300 Hz).
+            # This script does not change the filter; use examples/acquire_filter.jl for that.
+            if r < rate && filt.FilterType == FILTERTYPE_LOWPASS
+                @warn "connector $c: rate limited to $r Hz, probably by its lowpass filter " *
+                      "($(filt.FiltFreq) Hz); raise the cutoff, e.g. with examples/acquire_filter.jl --freq"
+            end
         end
 
         # block size per signal: room for 4 s of Float32 values, at least 10000 bytes

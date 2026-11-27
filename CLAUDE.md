@@ -105,6 +105,9 @@ Two layers:
   Seen: 0.001, 0.005, 0.01, 0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 25, 50, 75, 100, 150, 200, 300, 600, 1200, 2400.
   Always read the rate back. Connector 1 is kept at a rate ≥ the other connectors': raising it can raise
   others, and lowering it while others are higher has no effect — restore rates in reverse order (8 → 1).
+  The lowpass cutoff also limits the rate (2026-11-27, Bessel): with `FiltFreq = 0.5 Hz` a requested 1200 Hz
+  becomes 300 Hz (`WARN_PAR_PARSING`); 1 Hz and 5 Hz allow 1200 Hz. Write rate and filter together
+  (`examples/acquire_filter.jl`) when a connector has a very low cutoff; `examples/acquire_rate.jl` warns.
 - **Module crashes (reboots) were caused by how we started/read the subscription**, not by the module
   (2026-11-19). The old `subscribe` passed `StartTime = 0` to `FinishSubscription` and a 2 MB `MaxLen`
   (`MEASVALBLOCKSIZELIMIT`) to `GetMeasValBlock`; the MX840 (firmware 1.5.12) then rebooted after a few
